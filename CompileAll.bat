@@ -1,5 +1,4 @@
 set msbuildPath=%MSBUILD_2022_PATH%
-echo %msbuildPath%\MSBuild.exe
 
 REM Freetype solution 
 "%msbuildPath%\MSBuild.exe" Libraries/freetype/MSBuild.sln /p:configuration=Debug /p:Platform=x64

@@ -1,0 +1,6 @@
+[submodule "Libraries/freetype"]
+	path = Libraries/freetype
+	url = https://github.com/dreaw131313/freetype
+[submodule "Libraries/tinyxml2"]
+	path = Libraries/tinyxml2
+	url = https://github.com/dreaw131313/tinyxml2.git

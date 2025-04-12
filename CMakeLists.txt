@@ -3,13 +3,12 @@ cmake_minimum_required(VERSION 3.15)
 include(cmake/version.cmake)
 
 option(MSDFGEN_CORE_ONLY "Only build the core library with no dependencies" OFF)
-option(MSDFGEN_BUILD_STANDALONE "Build the msdfgen standalone executable" ON)
-option(MSDFGEN_USE_VCPKG "Use vcpkg package manager to link project dependencies" ON)
+option(MSDFGEN_BUILD_STANDALONE "Build the msdfgen standalone executable" OFF)
+option(MSDFGEN_USE_VCPKG "Use vcpkg package manager to link project dependencies" OFF)
 option(MSDFGEN_USE_OPENMP "Build with OpenMP support for multithreaded code" OFF)
 option(MSDFGEN_USE_CPP11 "Build with C++11 enabled" ON)
-option(MSDFGEN_USE_SKIA "Build with the Skia library" ON)
 option(MSDFGEN_INSTALL "Generate installation target" OFF)
-option(MSDFGEN_DYNAMIC_RUNTIME "Link dynamic runtime library instead of static" OFF)
+option(MSDFGEN_DYNAMIC_RUNTIME "Link dynamic runtime library instead of static" ON)
 option(BUILD_SHARED_LIBS "Generate dynamic library files instead of static" OFF)
 
 if(MSDFGEN_CORE_ONLY AND MSDFGEN_USE_VCPKG)
@@ -31,47 +30,6 @@ endif()
 
 if(BUILD_SHARED_LIBS)
     set(CMAKE_WINDOWS_EXPORT_ALL_SYMBOLS ON)
-endif()
-
-if(MSDFGEN_USE_VCPKG)
-    # Make sure that vcpkg toolchain file is set
-    if(NOT CMAKE_TOOLCHAIN_FILE)
-        if(DEFINED ENV{VCPKG_ROOT})
-            set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake")
-        else()
-            message(SEND_ERROR "Vcpkg toolchain not configured. Either set VCPKG_ROOT environment variable or pass -DCMAKE_TOOLCHAIN_FILE=VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake to cmake")
-        endif()
-    endif()
-    # Default to statically linked vcpkg triplet on Windows
-    if(WIN32 AND NOT VCPKG_TARGET_TRIPLET AND NOT MSDFGEN_DYNAMIC_RUNTIME)
-        if(CMAKE_GENERATOR_PLATFORM MATCHES "64$" AND NOT CMAKE_GENERATOR_PLATFORM STREQUAL "ARM64")
-            set(VCPKG_TARGET_TRIPLET "x64-windows-static")
-        elseif(CMAKE_GENERATOR_PLATFORM MATCHES "32$" OR CMAKE_GENERATOR_PLATFORM STREQUAL "x86")
-            set(VCPKG_TARGET_TRIPLET "x86-windows-static")
-        else()
-            if(CMAKE_GENERATOR_PLATFORM)
-                message(WARNING "Vcpkg triplet not explicitly specified and could not be deduced. Recommend using -DVCPKG_TARGET_TRIPLET=x64-windows-static or similar")
-            else()
-                message(WARNING "Vcpkg triplet not explicitly specified and could not be deduced. Recommend using -A to explicitly select platform (Win32 or x64)")
-            endif()
-        endif()
-    endif()
-    # Select project features
-    if(NOT MSDFGEN_VCPKG_FEATURES_SET)
-        set(VCPKG_MANIFEST_NO_DEFAULT_FEATURES ON)
-        if(NOT MSDFGEN_CORE_ONLY)
-            list(APPEND VCPKG_MANIFEST_FEATURES "extensions")
-        endif()
-        if(MSDFGEN_BUILD_STANDALONE)
-            list(APPEND VCPKG_MANIFEST_FEATURES "standalone")
-        endif()
-        if(MSDFGEN_USE_SKIA)
-            list(APPEND VCPKG_MANIFEST_FEATURES "geometry-preprocessing")
-        endif()
-        if(MSDFGEN_USE_OPENMP)
-            list(APPEND VCPKG_MANIFEST_FEATURES "openmp")
-        endif()
-    endif()
 endif()
 
 # Version is specified in vcpkg.json
@@ -129,36 +87,33 @@ endif()
 
 # Extensions library
 if(NOT MSDFGEN_CORE_ONLY)
-    if(NOT TARGET Freetype::Freetype)
-        find_package(Freetype REQUIRED)
-    endif()
-    if(NOT MSDFGEN_DISABLE_SVG AND NOT TARGET tinyxml2::tinyxml2)
-        find_package(tinyxml2 REQUIRED)
-    endif()
-    if(NOT MSDFGEN_DISABLE_PNG AND NOT TARGET PNG::PNG)
-        find_package(PNG REQUIRED)
-    endif()
+    
+	set(FT_DISABLE_ZLIB ON)
+	set(FT_DISABLE_BZIP2 ON)
+	set(FT_DISABLE_PNG ON)
+	set(FT_DISABLE_HARFBUZZ ON)
+	set(FT_DISABLE_BROTLI ON)
+	set(tinyxml2_BUILD_TESTING OFF)
+	
+	add_subdirectory(Libraries/freetype)
+	add_subdirectory(Libraries/tinyxml2)
+
 
     add_library(msdfgen-ext "${CMAKE_CURRENT_SOURCE_DIR}/msdfgen-ext.h" ${MSDFGEN_EXT_HEADERS} ${MSDFGEN_EXT_SOURCES})
     add_library(msdfgen::msdfgen-ext ALIAS msdfgen-ext)
     set_target_properties(msdfgen-ext PROPERTIES PUBLIC_HEADER "${MSDFGEN_EXT_HEADERS}")
     set_property(TARGET msdfgen-ext PROPERTY MSVC_RUNTIME_LIBRARY "${MSDFGEN_MSVC_RUNTIME}")
     target_compile_definitions(msdfgen-ext INTERFACE MSDFGEN_EXTENSIONS)
-    if(NOT MSDFGEN_DISABLE_SVG)
-        target_link_libraries(msdfgen-ext PRIVATE tinyxml2::tinyxml2)
-    else()
-        target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_DISABLE_SVG)
-    endif()
-    if(NOT MSDFGEN_DISABLE_PNG)
-        target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_USE_LIBPNG)
-        target_link_libraries(msdfgen-ext PRIVATE PNG::PNG)
-    else()
-        target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_DISABLE_PNG)
-    endif()
+    
+    target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_DISABLE_PNG)
+		
     if(MSDFGEN_DISABLE_VARIABLE_FONTS)
         target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_DISABLE_VARIABLE_FONTS)
     endif()
-    target_link_libraries(msdfgen-ext PRIVATE Freetype::Freetype msdfgen::msdfgen-core)
+	
+    target_link_libraries(msdfgen-ext PRIVATE freetype msdfgen::msdfgen-core)
+	target_link_libraries(msdfgen-ext PRIVATE tinyxml2)
+	
     target_include_directories(msdfgen-ext
         PUBLIC
             $<INSTALL_INTERFACE:include/msdfgen>
@@ -167,24 +122,6 @@ if(NOT MSDFGEN_CORE_ONLY)
             ${CMAKE_CURRENT_SOURCE_DIR}/include
     )
     set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT msdfgen-ext)
-
-    if(MSDFGEN_USE_SKIA)
-        set(MSDFGEN_SKIA_LIB skia)
-        set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
-        set(THREADS_PREFER_PTHREAD_FLAG TRUE)
-        find_package(Threads REQUIRED)
-        if(NOT TARGET skia)
-            if(MSDFGEN_USE_VCPKG)
-                find_package(unofficial-skia REQUIRED)
-                set(MSDFGEN_SKIA_LIB unofficial::skia::skia)
-            else()
-                find_package(skia REQUIRED)
-            endif()
-        endif()
-        target_compile_features(msdfgen-ext PUBLIC cxx_std_17)
-        target_compile_definitions(msdfgen-ext PUBLIC MSDFGEN_USE_SKIA)
-        target_link_libraries(msdfgen-ext PRIVATE Threads::Threads ${MSDFGEN_SKIA_LIB})
-    endif()
 
     if(BUILD_SHARED_LIBS AND WIN32)
         target_compile_definitions(msdfgen-ext PRIVATE "MSDFGEN_EXT_PUBLIC=__declspec(dllexport)")
@@ -217,109 +154,3 @@ endif()
 # Hide ZERO_CHECK and ALL_BUILD targets
 set_property(GLOBAL PROPERTY USE_FOLDERS ON)
 set_property(GLOBAL PROPERTY PREDEFINED_TARGETS_FOLDER meta)
-
-# Installation
-if(MSDFGEN_INSTALL)
-    include(GNUInstallDirs)
-    include(CMakePackageConfigHelpers)
-    set(MSDFGEN_CONFIG_PATH "lib/cmake/msdfgen")
-
-    # Generate msdfgen-config.h
-    if(BUILD_SHARED_LIBS AND WIN32)
-        set(MSDFGEN_PUBLIC_MACRO_VALUE " __declspec(dllimport)")
-    else()
-        set(MSDFGEN_PUBLIC_MACRO_VALUE "")
-    endif()
-    set(MSDFGEN_ADDITIONAL_DEFINES "")
-    if(MSDFGEN_USE_CPP11)
-        set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_USE_CPP11")
-    endif()
-    if(MSDFGEN_USE_OPENMP)
-        set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_USE_OPENMP")
-    endif()
-    if(NOT MSDFGEN_CORE_ONLY)
-        set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_EXTENSIONS")
-        if(MSDFGEN_USE_SKIA)
-            set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_USE_SKIA")
-        endif()
-        if(MSDFGEN_DISABLE_SVG)
-            set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_DISABLE_SVG")
-        endif()
-        if(NOT MSDFGEN_DISABLE_PNG)
-            set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_USE_LIBPNG")
-        else()
-            set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_DISABLE_PNG")
-        endif()
-        if(MSDFGEN_DISABLE_VARIABLE_FONTS)
-            set(MSDFGEN_ADDITIONAL_DEFINES "${MSDFGEN_ADDITIONAL_DEFINES}\n#define MSDFGEN_DISABLE_VARIABLE_FONTS")
-        endif()
-    endif()
-    configure_file("${CMAKE_CURRENT_SOURCE_DIR}/cmake/msdfgen-config.h.in" msdfgen-config.h)
-
-    write_basic_package_version_file(
-        "${CMAKE_CURRENT_BINARY_DIR}/msdfgenConfigVersion.cmake"
-        VERSION ${PROJECT_VERSION}
-        COMPATIBILITY SameMajorVersion
-    )
-
-    configure_package_config_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/msdfgenConfig.cmake.in"
-        ${MSDFGEN_CONFIG_PATH}/msdfgenConfig.cmake
-        INSTALL_DESTINATION ${MSDFGEN_CONFIG_PATH}
-        NO_CHECK_REQUIRED_COMPONENTS_MACRO
-    )
-
-    configure_file(
-        "${CMAKE_CURRENT_SOURCE_DIR}/cmake/msdfgenConfig.cmake.in"
-        msdfgenConfig.cmake
-        @ONLY
-    )
-
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/msdfgen-config.h" DESTINATION include/msdfgen)
-    install(FILES "${CMAKE_CURRENT_BINARY_DIR}/msdfgen-config.h" DESTINATION include/msdfgen/msdfgen)
-    install(TARGETS msdfgen-core EXPORT msdfgenTargets
-        RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-        LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        FRAMEWORK DESTINATION ${CMAKE_INSTALL_LIBDIR}
-        PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/msdfgen/core
-    )
-    install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/msdfgen.h" DESTINATION include/msdfgen)
-    if(MSVC AND BUILD_SHARED_LIBS)
-        install(FILES $<TARGET_PDB_FILE:msdfgen-core> DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
-    endif()
-
-    if(NOT MSDFGEN_CORE_ONLY)
-        install(TARGETS msdfgen-ext EXPORT msdfgenTargets
-            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
-            LIBRARY DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            FRAMEWORK DESTINATION ${CMAKE_INSTALL_LIBDIR}
-            PUBLIC_HEADER DESTINATION ${CMAKE_INSTALL_INCLUDEDIR}/msdfgen/ext
-        )
-        install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/msdfgen-ext.h" DESTINATION include/msdfgen)
-        if(MSVC AND BUILD_SHARED_LIBS)
-            install(FILES $<TARGET_PDB_FILE:msdfgen-ext> DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
-        endif()
-        install(TARGETS msdfgen-full EXPORT msdfgenTargets)
-    endif()
-
-    export(EXPORT msdfgenTargets NAMESPACE msdfgen:: FILE "${CMAKE_CURRENT_BINARY_DIR}/msdfgenTargets.cmake")
-    install(EXPORT msdfgenTargets FILE msdfgenTargets.cmake NAMESPACE msdfgen:: DESTINATION ${MSDFGEN_CONFIG_PATH})
-
-    if(MSDFGEN_BUILD_STANDALONE)
-        install(TARGETS msdfgen EXPORT msdfgenBinaryTargets DESTINATION ${CMAKE_INSTALL_BINDIR})
-        if(MSVC)
-            install(FILES $<TARGET_PDB_FILE:msdfgen> DESTINATION ${CMAKE_INSTALL_BINDIR} OPTIONAL)
-        endif()
-        export(EXPORT msdfgenBinaryTargets NAMESPACE msdfgen-standalone:: FILE "${CMAKE_CURRENT_BINARY_DIR}/msdfgenBinaryTargets.cmake")
-        install(EXPORT msdfgenBinaryTargets FILE msdfgenBinaryTargets.cmake NAMESPACE msdfgen-standalone:: DESTINATION ${MSDFGEN_CONFIG_PATH})
-    endif()
-
-    install(
-        FILES
-            "${CMAKE_CURRENT_BINARY_DIR}/${MSDFGEN_CONFIG_PATH}/msdfgenConfig.cmake"
-            "${CMAKE_CURRENT_BINARY_DIR}/msdfgenConfigVersion.cmake"
-        DESTINATION ${MSDFGEN_CONFIG_PATH}
-    )
-endif()
